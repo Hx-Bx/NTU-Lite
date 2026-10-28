@@ -2,4 +2,5 @@
 pycache/
 models/
 Learning/
+__pycache__/
 *.safetensors
