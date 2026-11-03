@@ -2,6 +2,7 @@ from pathlib import Path
 
 import torch
 import time
+import json
 import torch.nn.functional as F
 from safetensors.torch import load_file
 from transformers import AutoConfig, AutoTokenizer
@@ -22,7 +23,7 @@ class StreamedModel:
         self.tokenizer = AutoTokenizer.from_pretrained(self.dir)
 
         # Small parts that stay loaded the whole time
-        self.embed_w = load_file(str(self.dir / "embed.safetensors"), device=device)["weight"]
+        self.embed_w = load_file(str(self.dir / "embed.safetensors"), device=device)["weight"].to(device,dtype)
 
         self.norm = Qwen2RMSNorm(self.config.hidden_size, eps=self.config.rms_norm_eps)
         self.norm.load_state_dict(load_file(str(self.dir / "norm.safetensors")))
@@ -42,7 +43,7 @@ class StreamedModel:
         self.timings = {"read": 0.0, "transfer": 0.0, "assign": 0.0, "compute": 0.0, "other": 0.0}
 
     def _sync(self):
-        if self.profile:
+        if self.profile and self.device == "cuda":
             torch.cuda.synchronize()
 
     def _run_layer(self, i, hidden, positions, cos_sin):
@@ -51,7 +52,7 @@ class StreamedModel:
         t0 = time.perf_counter()
         weights = load_file(str(path))                                   # file -> CPU RAM
         t1 = time.perf_counter()
-        weights = {k: v.to(self.device) for k, v in weights.items()}    # CPU -> GPU
+        weights = {k: v.to(self.device, self.dtype) for k, v in weights.items()}    # CPU -> GPU
         self._sync()
         t2 = time.perf_counter()
         self.slot.load_state_dict(weights, assign=True)                  # into the slot
