@@ -8,6 +8,7 @@ from safetensors.torch import load_file
 from transformers import AutoConfig, AutoTokenizer
 from transformers.models.qwen2.modeling_qwen2 import Qwen2RotaryEmbedding
 from Engine.Layer import decoder_layer, rms_norm
+from Engine.KVCache import KVCache
 
 
 class StreamedModel:
@@ -40,7 +41,10 @@ class StreamedModel:
         if self.profile and self.device == "cuda":
             torch.cuda.synchronize()
 
-    def _run_layer(self, i, hidden, cos, sin):
+    def new_cache(self, max_tokens=2048):
+        return KVCache(self.config, max_tokens, self.device, self.dtype)
+
+    def _run_layer(self, i, hidden, cos, sin, cache):
         path = self.dir / f"layer_{i:02d}.safetensors"
 
         t0 = time.perf_counter()
@@ -50,7 +54,7 @@ class StreamedModel:
         self._sync()
         t2 = time.perf_counter()
 
-        hidden = decoder_layer(hidden, weights, cos, sin, self.config)
+        hidden = decoder_layer(hidden, weights, cos, sin, self.config, cache, i)
         self._sync()
         t3 = time.perf_counter()
 
@@ -61,16 +65,18 @@ class StreamedModel:
 
     
     @torch.no_grad()
-    def next_token(self, ids):
+    def next_token(self, ids, cache):
         t0 = time.perf_counter()
         hidden = F.embedding(ids, self.embed_w)
-        positions = torch.arange(ids.shape[1], device=self.device).unsqueeze(0)
+        start = cache.length
+        positions = torch.arange(start, start + ids.shape[1], device=self.device).unsqueeze(0)
         cos, sin = self.rotary(hidden, positions)
         self._sync()
         self.timings["other"] += time.perf_counter() - t0
 
         for i in range(self.num_layers):
-            hidden = self._run_layer(i, hidden, cos, sin)
+            hidden = self._run_layer(i, hidden, cos, sin, cache)
+        cache.advance(ids.shape[1])
 
         t1 = time.perf_counter()
         hidden = rms_norm(hidden, self.norm_w, self.config.rms_norm_eps)
@@ -79,3 +85,4 @@ class StreamedModel:
         self._sync()
         self.timings["other"] += time.perf_counter() - t1
         return token
+

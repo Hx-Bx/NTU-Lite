@@ -21,6 +21,7 @@ text, stats = generate(model, prompt, on_token=lambda t: print(t, end="", flush=
 
 
 speed = stats["tokens"] / stats["seconds"]
+print(f"prefill (first pass): {stats['prefill']:.1f}s")
 print(f"\n\n{stats['tokens']} tokens in {stats['seconds']:.1f}s ({speed:.1f} tokens/s)")
 if device == "cuda":
     print(f"peak VRAM: {torch.cuda.max_memory_allocated() / 1024**2:.0f} MB")

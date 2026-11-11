@@ -19,7 +19,7 @@ def rope(x, cos, sin):
     return x * cos + rotated * sin
 
 
-def attention(x, w, cos, sin, n_heads, n_kv_heads):
+def attention(x, w, cos, sin, n_heads, n_kv_heads, cache=None, i=0):
     batch, seq, hidden = x.shape
     head_dim = hidden // n_heads
 
@@ -35,14 +35,17 @@ def attention(x, w, cos, sin, n_heads, n_kv_heads):
     q = rope(q, cos, sin)
     k = rope(k, cos, sin)
 
+    if cache is not None:
+        k, v = cache.update(i, k, v)
+
     out = F.scaled_dot_product_attention(q, k, v, is_causal=seq > 1, enable_gqa=True)
     out = out.transpose(1, 2).reshape(batch, seq, hidden)
     return F.linear(out, w["self_attn.o_proj.weight"])
 
 
-def decoder_layer(x, w, cos, sin, config):
+def decoder_layer(x, w, cos, sin, config, cache=None, i=0):
     eps = config.rms_norm_eps
     h = rms_norm(x, w["input_layernorm.weight"], eps)
-    x = x + attention(h, w, cos, sin, config.num_attention_heads, config.num_key_value_heads)
+    x = x + attention(h, w, cos, sin, config.num_attention_heads, config.num_key_value_heads, cache, i)
     h = rms_norm(x, w["post_attention_layernorm.weight"], eps)
     return x + mlp(h, w)
